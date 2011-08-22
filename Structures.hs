@@ -49,6 +49,9 @@ data Activity = Activity
 			end :: UTCTime,
 			hostname_ :: HostName}
 
+data IRCMessage = IRCMessage { id :: Int64,
+				message :: L.ByteString }
+
 data ServerState = ServerState {	pool :: ConnPool Host,
 				  	childs :: M.Map String (TChan ChannelMessage)}
 type ServerEnv = StateT ServerState LoggerEnv

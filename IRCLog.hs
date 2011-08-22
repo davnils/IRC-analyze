@@ -80,7 +80,7 @@ worker :: String -> ChildEnv ()
 worker server = do
 	h <- liftIO $ connectTo server $ PortNumber $ fromIntegral 6667
 	liftIO $ hSetBuffering h NoBuffering
-	S.modify $ \(ChildState db _ c _) -> ChildState db (Valid h) c []
+	S.modify $ \(ChildState db _ c _) -> ChildState db (Valid (h, server)) c []
 	
 	write "NICK botty93"
 	write "USER botty93 0 * :tuto bot"
@@ -91,7 +91,7 @@ workerLoop :: ChildEnv ()
 workerLoop = do
 	--Any Input available on the IRC socket?
 	--TODO: Catch any exception -> disconnected (use try with a fitting exp)
-	Valid h <- S.gets ircHandle
+	Valid (h, _) <- S.gets ircHandle
 	liftIO (hReady h) >>= run ircHandler
 	-- Read messages from channel
 	chan <- S.gets messageChannel
@@ -102,7 +102,7 @@ workerLoop = do
 
 ircHandler :: ChildEnv ()
 ircHandler = do
-	Valid h <- S.gets ircHandle
+	Valid (h, _) <- S.gets ircHandle
 	msg' <- liftIO $ (printf "%s\n" :: String -> String) <$> hGetLine h
 	liftIO $ putStrLn $ show msg'
 	msg <- return $ decode msg'
@@ -118,7 +118,10 @@ ircAction (Message prefix "PRIVMSG" params) = do
 			let (nick, user, host) = getInfo
 			lift $ infoM_ $ "Logging msg with (nick, user, host) = " ++
 				nick ++ ", " ++ user ++ ", " ++ host
-			
+			Valid (_, server) <- S.gets ircHandle
+			pipe <- gets dbSocket
+			lift $ runReaderT (DatabaseState pipe) $
+				addMsg server (params !! 0) nick (params !! 1)
 			
 	where
 		getInfo = case prefix of
