@@ -11,13 +11,14 @@ import Control.Monad.Reader
 import Control.Monad.Trans.Maybe
 import Control.Exception (catch, IOException, evaluate, SomeException)
 import Data.Int
-import qualified Data.ByteString as L
+import qualified Data.ByteString.Char8 as L
 import Data.Maybe
 import qualified Data.Set as S
 import Data.Time.Clock (UTCTime(..), utctDay, getCurrentTime, secondsToDiffTime)
 import Data.Time.Calendar (toModifiedJulianDay, Day(..))
 import Database.MongoDB
 import LogWrapper
+import Network.IRC
 import Prelude hiding (log, catch, lookup, id)
 import qualified Prelude as P
 import Structures
@@ -54,12 +55,32 @@ runOnDatabase db f = do
 		p <- asks pipe
 		log . io $ runAction (use (Database $ db) f) (Safe []) Master p
 
-addEntry :: Entry -> DatabaseEnv Bool
-addEntry entry = do
-	log $ debugM_ $ "Adding entry (id: " ++ (show $ id entry) ++ ")"
-	res <- runOnDatabase "Log" $ do
-		insert ("TODO") $ transferTo entry
-	case res of
-		Left e -> (log $ errorM_ $ "Failed to add entry, error: " ++ show e) >> return False
-		Right id -> (log $ debugM_ $ "Added entry with db-id: " ++ show id) >> return True
+-- | addMsg lookups the corresponding id and inserts the message.
+addMsg :: ServerName -> Channel -> UserName -> String -> DatabaseEnv Bool
+addMsg server channel nick msg = do
+	log $ debugM_ $ "Adding message"
+	res <- runOnDatabase "irc" $ do
+                find (select ["nick" =: nick, "hostname" =: server] $ "users") >>= rest
+		--TODO: logs.find(end == 0) => en träff
+
+        loaded <- case res of
+                Left e -> (log $ errorM_ $ "Failed to load id") >> return []
+		Right docs -> return docs
+
+        translated <- return $ (mapM transferFrom (loaded :: [Document]) :: Maybe [Entry])
+	let transList = fromMaybe [] translated
+
+	success <- case length transList of
+		0 -> log $ errorM_ "Failed to find an id" >> return False
+		1 -> log $ debugM_ "Found an id" >> return True
+		_ -> log $ errorM_ "Multiple id:s returned" >> return False
 	
+	if success then do
+		let input = IRCMessage (id $ transList !! 0) $ L.pack msg
+		res <- runOnDatabase "irc" $ do
+			insert ("messages") $ transferTo input
+		case res of
+			Left e -> (log $ errorM_ $ "Failed to add message, error: " ++ show e) >> return False
+			Right id -> (log $ debugM_ $ "Added message with id: " ++ show id) >> return True
+
+		else return False

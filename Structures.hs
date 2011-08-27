@@ -3,7 +3,7 @@
 
 module Structures
 (DatabaseState(..), DatabaseEnv, ChildState(..), ChildEnv, ServerState(..), ServerEnv,
-ChannelMessage(..), Entry(..), Activity(..), HandleWrapper(..),
+ChannelMessage(..), Entry(..), Activity(..), IRCMessage(..), HandleWrapper(..),
 transferTo, transferFrom)
 where
 
@@ -14,7 +14,7 @@ import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.State
-import qualified Data.ByteString as L
+import qualified Data.ByteString.Char8 as L
 import Data.Int
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -46,10 +46,10 @@ data Entry = Entry {	id :: Int64,
 
 data Activity = Activity
 		{	start :: UTCTime,
-			end :: UTCTime,
-			hostname_ :: HostName}
+			end :: UTCTime
+			}
 
-data IRCMessage = IRCMessage { id :: Int64,
+data IRCMessage = IRCMessage { userid :: Int64,
 				message :: L.ByteString }
 
 data ServerState = ServerState {	pool :: ConnPool Host,
@@ -57,7 +57,7 @@ data ServerState = ServerState {	pool :: ConnPool Host,
 type ServerEnv = StateT ServerState LoggerEnv
 
 data ChildState = ChildState {	dbSocket :: Pipe,
-				ircHandle :: HandleWrapper,
+				ircHandle :: (HandleWrapper, String),
 				messageChannel :: TChan ChannelMessage,
 				channels :: [String]}
 type ChildEnv = StateT ChildState LoggerEnv
@@ -79,7 +79,7 @@ toVal = map (\(l, W v) -> (l :: UString) := val v)
 f a d = lookup (a) d
 extrBin a d = f a d >>= \(Binary x) -> return x
 
--- Could probably be cleaned up with template haskell.
+-- MongoIO instances of every data-structure that will be stored in the database.
 instance MongoIO Entry where
 	transferTo entry = toVal [
 			("id", W $ id entry),
@@ -97,3 +97,9 @@ instance MongoIO Entry where
 instance MongoIO Activity where
 	transferTo activity = undefined
 	transferFrom doc = undefined
+
+instance MongoIO IRCMessage where
+	transferTo msg = toVal [
+			("id", W $ userid msg), 
+			("msg", W $ userid msg)] 
+	transferFrom doc = liftM2 IRCMessage (f "id" doc) (extrBin "msg" doc)

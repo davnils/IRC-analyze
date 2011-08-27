@@ -119,7 +119,7 @@ ircAction (Message prefix "PRIVMSG" params) = do
 			lift $ infoM_ $ "Logging msg with (nick, user, host) = " ++
 				nick ++ ", " ++ user ++ ", " ++ host
 			Valid (_, server) <- S.gets ircHandle
-			pipe <- gets dbSocket
+			pipe <- S.gets dbSocket
 			lift $ runReaderT (DatabaseState pipe) $
 				addMsg server (params !! 0) nick (params !! 1)
 			
