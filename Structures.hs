@@ -1,8 +1,9 @@
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveDataTypeable #-}
 
 module Structures
-(DatabaseState(..), DatabaseEnv, ChildState(..), ChildEnv, ServerState(..), ServerEnv,
+(DbException(..), DatabaseState(..), DatabaseEnv, ChildState(..), ChildEnv, ServerState(..), ServerEnv,
 ChannelMessage(..), Entry(..), Activity(..), IRCMessage(..), HandleWrapper(..),
 transferTo, transferFrom)
 where
@@ -10,17 +11,20 @@ where
 import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Concurrent.STM.TChan
+import Control.Exception
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.State
 import qualified Data.ByteString.Char8 as L
+import Data.Bson (ObjectId)
 import Data.Int
 import qualified Data.Map as M
 import qualified Data.Set as S
 import Data.Time.Clock (UTCTime(..), utctDay, getCurrentTime, secondsToDiffTime)
 import Data.Time.Calendar (toModifiedJulianDay, Day(..))
-import Database.MongoDB
+import Data.Typeable
+import Database.MongoDB hiding (timestamp)
 import LogWrapper
 import Network.Socket(HostName)
 import Prelude hiding (log, catch, lookup, id)
@@ -30,39 +34,46 @@ import System.IO
 data DatabaseState = DatabaseState { pipe :: Pipe }
 type DatabaseEnv = ReaderT DatabaseState LoggerEnv
 
+data DbException = Critical
+	deriving (Show, Typeable)
+
+instance Exception DbException
+
 data ChannelMessage
 	= JoinMessage String
 	| LeaveMessage String
 	| StatsQuery 
 	| StatsReply { channelStatus :: [String]} 
 
-data Entry = Entry {	id :: Int64,
-			nick :: L.ByteString,
-			ip :: Int32,
-			hostname :: HostName,
-			realname :: L.ByteString,
-			username :: L.ByteString,
-			logs :: [Activity] }
+data Entry = Entry {	id :: Maybe ObjectId,
+			nick :: String,
+			ircserver :: String,
+			hostname :: String,
+			realname :: String,
+			username :: String,
+			logs :: [Activity],
+			messages :: [IRCMessage] }
+	deriving Show
 
-data Activity = Activity
-		{	start :: UTCTime,
-			end :: UTCTime
-			}
+data Activity = Activity {	start :: UTCTime,
+				end :: UTCTime }
+	deriving Show
 
-data IRCMessage = IRCMessage { userid :: Int64,
-				message :: L.ByteString }
+data IRCMessage = IRCMessage {  timestamp :: UTCTime,
+				message :: String }
+	deriving Show
 
 data ServerState = ServerState {	pool :: ConnPool Host,
-				  	childs :: M.Map String (TChan ChannelMessage)}
+				  	childs :: M.Map String (TChan ChannelMessage) }
 type ServerEnv = StateT ServerState LoggerEnv
 
 data ChildState = ChildState {	dbSocket :: Pipe,
-				ircHandle :: (HandleWrapper, String),
+				ircHandle :: HandleWrapper,
 				messageChannel :: TChan ChannelMessage,
-				channels :: [String]}
+				channels :: [String] }
 type ChildEnv = StateT ChildState LoggerEnv
 
-data HandleWrapper = Invalid | Valid { getHandle :: Handle }
+data HandleWrapper = Invalid | Valid { getHandle :: (Handle, String) }
 
 class MongoIO a where
 	transferTo :: a -> Document
@@ -73,33 +84,43 @@ data ValWrapper = forall a. Val a => W a
 
 -- | Local functions used for convenience in MongoIO instances.
 liftM6 f a1 a2 a3 a4 a5 a6 = return f `ap` a1 `ap` a2 `ap` a3 `ap` a4 `ap` a5 `ap` a6
-liftM7 f a1 a2 a3 a4 a5 a6 a7 = return f `ap` a1 `ap` a2 `ap` a3 `ap` a4 `ap` a5 `ap` a6 `ap` a7
+liftM8 f a1 a2 a3 a4 a5 a6 a7 a8 = return f
+	`ap` a1 `ap` a2 `ap` a3 `ap` a4 `ap` a5 `ap` a6 `ap` a7 `ap` a8
 
 toVal = map (\(l, W v) -> (l :: UString) := val v)
-f a d = lookup (a) d
+f a d = lookup a d
 extrBin a d = f a d >>= \(Binary x) -> return x
 
 -- MongoIO instances of every data-structure that will be stored in the database.
 instance MongoIO Entry where
-	transferTo entry = toVal [
-			("id", W $ id entry),
-			("nick", W $ Binary $ nick entry),
-			("ip", W $  ip entry),
+	transferTo entry = toVal $ parseId ++ [
+			("nick", W $ nick entry),
+			("ircserver", W $  ircserver entry),
 			("hostname", W $ hostname entry),
-			("realname", W $ Binary $ realname entry),
-			("username", W $ Binary $ username entry),
-			("logs", W $ map transferTo $ logs entry)
+			("realname", W $ realname entry),
+			("username", W $ username entry),
+			("logs", W $ map transferTo $ logs entry),
+			("messages", W $ map transferTo $ messages entry)
 			]
-	transferFrom doc = liftM7 Entry (f "id" doc) (extrBin "nick" doc) (f "ip" doc)
-		(f "hostname" doc) (extrBin "realname" doc) (extrBin "username" doc) 
-		(mapM transferFrom $ f "logs" doc)
+		where
+		parseId = case id entry of
+			Just _id -> [("_id", W $ _id)]
+			Nothing -> []
+
+	transferFrom doc = liftM8 Entry (Just $ f "_id" doc) (f "nick" doc) (f "ircserver" doc)
+		(f "hostname" doc) (f "realname" doc) (f "username" doc) 
+		(mapM transferFrom $ lookup "logs" doc)
+		(mapM transferFrom $ lookup "messages" doc)
 
 instance MongoIO Activity where
-	transferTo activity = undefined
-	transferFrom doc = undefined
+	transferTo activity = toVal [
+				("start", W $ start activity),
+				("end", W $ end activity)
+				]
+	transferFrom doc = liftM2 Activity (f "start" doc) (f "end" doc)
 
 instance MongoIO IRCMessage where
 	transferTo msg = toVal [
-			("id", W $ userid msg), 
-			("msg", W $ userid msg)] 
-	transferFrom doc = liftM2 IRCMessage (f "id" doc) (extrBin "msg" doc)
+			("timestamp", W $ timestamp msg), 
+			("msg", W $ message msg)] 
+	transferFrom doc = liftM2 IRCMessage (f "timestamp" doc) (f "msg" doc)

@@ -22,8 +22,10 @@ import qualified Prelude as P
 import Storage
 import Structures
 import System.IO
+import System.Log.Formatter
 import System.Log.Logger
 import System.Log.Handler.Simple
+import System.Log.Handler (setFormatter)
 import Text.Printf
 
 main :: IO ()
@@ -31,7 +33,8 @@ main = runReaderT run $ LoggerState "default"
 
 run :: LoggerEnv ()
 run = do
-	logFile <- io $ fileHandler "log" DEBUG
+	logFile <- io $ fileHandler "log" DEBUG >>=  \h -> return $
+		setFormatter h (simpleLogFormatter "[$prio] $msg")
 	io $ updateGlobalLogger rootLoggerName $ addHandler logFile 
 	io $ updateGlobalLogger rootLoggerName $ setLevel DEBUG
 	infoM_ "Initializing"
@@ -63,7 +66,7 @@ act "add" [server, channel] = do
 
 act _ _ = return ()
 
---act "remove" server channel pool = undefined
+-- TODO: act "remove" server channel pool = undefined
 
 launchThread :: String -> ServerEnv (TChan ChannelMessage, String)
 launchThread server = do
@@ -111,17 +114,44 @@ ircHandler = do
 		Just m -> ircAction m
 		_ -> lift $ errorM_ $ "Failed to parse IRC message"
 
+-- | Handles WHO replies.
+--   Begins by searching for every nick, ignoring any found users.
+--   It then inserts the ones not found.
+ircAction (Message _ "352" [_,_,user,host,server,nick,_,real]) = do
+	let real' = (words real) !! 2
+	lift $ debugM_ $ "Adding nick: " ++ nick
+		++ " host: " ++ host
+		++ " server: " ++ server
+		++ " user: " ++ user
+		++ " real: " ++ real
+
+	exists <- runQuery $ searchNick server host nick
+	unless exists $ runQuery $ insertNick server host nick user real
+	where
+		runQuery q = do
+			pipe <- S.gets dbSocket
+			lift $ runReaderT 
+				q --TODO: Don't ignore the result(???)
+				(DatabaseState pipe)
+
+ircAction (Message _ "352" _) = lift $ errorM_ $ "Read invalid 352 message"
+
+ircAction (Message _ "315" _) = lift (debugM_ "Read end of WHO msg") >> return ()
+
 ircAction (Message prefix "PRIVMSG" params) = do
 	if length params /= 2 then
 		lift $ errorM_ $ "Received PRIVMSG with length " ++ (show $ length params)
-		else do
-			let (nick, user, host) = getInfo
-			lift $ infoM_ $ "Logging msg with (nick, user, host) = " ++
-				nick ++ ", " ++ user ++ ", " ++ host
-			Valid (_, server) <- S.gets ircHandle
-			pipe <- S.gets dbSocket
-			lift $ runReaderT (DatabaseState pipe) $
-				addMsg server (params !! 0) nick (params !! 1)
+	else do 
+
+	let (nick, user, host) = getInfo
+	lift $ infoM_ $ "Logging msg with (nick, user, host) = " ++
+		nick ++ ", " ++ user ++ ", " ++ host
+	Valid (_, server) <- S.gets ircHandle
+	pipe <- S.gets dbSocket
+	lift $ runReaderT 
+		(addMsg server (params !! 0) nick (params !! 1)
+			>> return ()) --TODO: Don't ignore the result
+		(DatabaseState pipe)
 			
 	where
 		getInfo = case prefix of
@@ -143,6 +173,7 @@ messageHandler = do
 	case msg of
 		JoinMessage channel -> do
 			write $ "JOIN " ++ channel	
+			write $ "WHO " ++ channel	
 			lift $ infoM_ $ "Joined channel " ++ channel
 			
 		LeaveMessage channel -> do
@@ -155,6 +186,6 @@ messageHandler = do
 
 write :: String -> ChildEnv()
 write msg = do
-	Valid h <- S.gets ircHandle
+	Valid (h, _) <- S.gets ircHandle
 	liftIO $ hPrintf h "%s\r\n" msg
 	lift $ debugM_ $ "Sent message: " ++ msg
