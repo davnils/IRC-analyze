@@ -109,8 +109,8 @@ instance MongoIO Entry where
 
 	transferFrom doc = liftM8 Entry (Just $ f "_id" doc) (f "nick" doc) (f "ircserver" doc)
 		(f "hostname" doc) (f "realname" doc) (f "username" doc) 
-		(mapM transferFrom $ lookup "logs" doc)
-		(mapM transferFrom $ lookup "messages" doc)
+		(f "logs" doc >>= mapM transferFrom)
+		(f "messages" doc >>= mapM transferFrom)
 
 instance MongoIO Activity where
 	transferTo activity = toVal [

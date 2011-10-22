@@ -99,11 +99,7 @@ getNetwork :: String -> String
 getNetwork = tail . dropWhile (/= '.') 
 
 existsOpenSlot :: [Activity] -> Bool
-existsOpenSlot [] = False
-existsOpenSlot (e:tail) 
-	| end e == infiniteTime = True 
-	| otherwise = existsOpenSlot tail
---any (\log -> end log == infiniteTime)
+existsOpenSlot = any (\log -> end log == infiniteTime)
 
 infiniteTime :: UTCTime
 infiniteTime = UTCTime (ModifiedJulianDay 0) 0
