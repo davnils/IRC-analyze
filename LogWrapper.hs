@@ -14,12 +14,12 @@ io :: IO a -> LoggerEnv a
 io = liftIO
 
 logM__ :: String -> Priority -> String -> IO ()
-logM__ = logM 
+logM__ = logM
 
 logM_ :: Priority -> String -> LoggerEnv ()
 logM_ priority msg = do
-	logger <- asks name
-	io $ logM__ logger priority msg
+        logger <- asks name
+        io $ logM__ logger priority msg
 
 infoM_ :: String -> LoggerEnv()
 infoM_ = logM_ INFO
@@ -35,4 +35,3 @@ errorM_ = logM_ ERROR
 
 criticalM_ :: String -> LoggerEnv()
 criticalM_ = logM_ CRITICAL
-
