@@ -14,8 +14,7 @@ io :: IO a -> LoggerEnv a
 io = liftIO
 
 logM__ :: String -> Priority -> String -> IO ()
-logM__ logger priority msg = do
-	logM logger priority msg
+logM__ = logM 
 
 logM_ :: Priority -> String -> LoggerEnv ()
 logM_ priority msg = do
@@ -23,17 +22,17 @@ logM_ priority msg = do
 	io $ logM__ logger priority msg
 
 infoM_ :: String -> LoggerEnv()
-infoM_ msg = logM_ INFO msg
+infoM_ = logM_ INFO
 
 debugM_ :: String -> LoggerEnv()
-debugM_ msg = logM_ DEBUG msg
+debugM_ = logM_ DEBUG
 
 warningM_ :: String -> LoggerEnv()
-warningM_ msg = logM_ WARNING msg
+warningM_ = logM_ WARNING
 
 errorM_ :: String -> LoggerEnv()
-errorM_ msg = logM_ ERROR msg
+errorM_ = logM_ ERROR
 
 criticalM_ :: String -> LoggerEnv()
-criticalM_ msg = logM_ CRITICAL msg
+criticalM_ = logM_ CRITICAL
 

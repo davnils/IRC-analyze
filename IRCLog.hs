@@ -48,7 +48,7 @@ shell :: ServerEnv()
 shell = do
 	(cmd:tail) <- liftIO $ words <$> (putStr "> " >> getLine)
 	act cmd tail 
-	unless (cmd == "quit") $ shell
+	unless (cmd == "quit") shell
 
 act :: String -> [String] -> ServerEnv ()
 act "quit" _ = return ()
@@ -58,9 +58,9 @@ act "add" [server, channel] = do
 	-- TODO: lookup channels.. (put it in a state monad)
 	connected <- M.member server <$> S.gets childs
 	pipe <- if connected then do
-			Just x <- S.gets childs >>= return . M.lookup server 
+			Just x <- M.lookup server <$> S.gets childs
 			return x
-		else (\(p, _) -> p) <$> launchThread server
+		else fst <$> launchThread server
 	S.modify $ \(ServerState p c) ->
 		ServerState p $ M.insert server pipe c 
 	liftIO $ atomically $ writeTChan pipe $ JoinMessage channel
@@ -72,8 +72,8 @@ act _ _ = return ()
 launchThread :: String -> ServerEnv (TChan ChannelMessage, String)
 launchThread server = do
 	pool <- S.gets pool
-	chan <- liftIO $ newTChanIO :: ServerEnv (TChan ChannelMessage)
-	let build = \x -> ChildState (pipe x) Invalid chan []
+	chan <- liftIO newTChanIO :: ServerEnv (TChan ChannelMessage)
+	let build x = ChildState (pipe x) Invalid chan []
 	Just env <- lift $ getEnv pool >>= \x -> return $ fmap build x
 	r <- ask
 	-- TODO: Clean up using forkable-monad
@@ -82,7 +82,7 @@ launchThread server = do
 
 worker :: String -> ChildEnv ()
 worker server = do
-	h <- liftIO $ connectTo server $ PortNumber $ fromIntegral 6667
+	h <- liftIO $ connectTo server $ PortNumber 6667
 	liftIO $ hSetBuffering h NoBuffering
 	S.modify $ \(ChildState db _ c _) -> ChildState db (Valid (h, server)) c []
 	
@@ -107,19 +107,19 @@ workerLoop = do
 ircHandler :: ChildEnv ()
 ircHandler = do
 	Valid (h, _) <- S.gets ircHandle
-	msg' <- liftIO $ (printf "%s\n" :: String -> String) <$> hGetLine h
-	liftIO $ putStrLn $ show msg'
-	msg <- return $ decode msg'
-	lift $ debugM_ $ "Received: " ++ show msg
-	case msg of
+	msg <- liftIO $ (printf "%s\n" :: String -> String) <$> hGetLine h
+	lift $ debugM_ $ show msg
+	let msg' = decode msg
+	lift $ debugM_ $ "Received: " ++ show msg'
+	case msg' of
 		Just m -> ircAction m
-		_ -> lift $ errorM_ $ "Failed to parse IRC message"
+		_ -> lift $ errorM_ "Failed to parse IRC message"
 
 -- | Handles WHO replies.
 --   Begins by searching for every nick, ignoring any found users.
 --   It then inserts the ones not found.
 ircAction (Message _ "352" [_,_,user,host,server,nick,_,real]) = do
-	let real' = (words real) !! 2
+	let real' = words real !! 2
 	lift $ debugM_ $ "Adding nick: " ++ nick
 		++ " host: " ++ host
 		++ " server: " ++ server
@@ -133,14 +133,14 @@ ircAction (Message _ "352" [_,_,user,host,server,nick,_,real]) = do
 			pipe <- S.gets dbSocket
 			lift $ runReaderT q (DatabaseState pipe)
 
-ircAction (Message _ "352" _) = lift $ errorM_ $ "Read invalid 352 message"
+ircAction (Message _ "352" _) = lift $ errorM_ "Read invalid 352 message"
 
 ircAction (Message _ "315" _) = lift (debugM_ "Read end of WHO msg") >> return ()
 
 ircAction (Message prefix "PRIVMSG" params) = do
 	if length params /= 2 then
-		lift $ errorM_ $ "Received PRIVMSG with length " ++ (show $ length params)
-	else do 
+		lift $ errorM_ $ "Received PRIVMSG with length " ++ show (length params)
+		else do 
 
 	let (nick, user, host) = getInfo
 	lift $ infoM_ $ "Logging msg with (nick, user, host) = " ++
@@ -148,7 +148,7 @@ ircAction (Message prefix "PRIVMSG" params) = do
 	Valid (_, server) <- S.gets ircHandle
 	pipe <- S.gets dbSocket
 	lift $ runReaderT 
-		(addMsg server (params !! 0) nick (params !! 1)
+		(addMsg server (head params) nick (params !! 1)
 			>> return ()) --TODO: Don't ignore the result
 		(DatabaseState pipe)
 			
@@ -158,7 +158,7 @@ ircAction (Message prefix "PRIVMSG" params) = do
 			Nothing -> ("", "", "")
 		
 ircAction (Message prefix "PING" params) = do
-	lift $ infoM_ $ "Got PING! (" ++ (show params) ++ ")"
+	lift $ infoM_ $ "Got PING! (" ++ show params ++ ")"
 	case params of
 		[arg] -> write $ "PONG :" ++ arg
 		[] -> lift $ errorM_ "Got invalid PING without argument"

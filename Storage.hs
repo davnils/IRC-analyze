@@ -36,7 +36,7 @@ bracket_ a b c = a >> c >>= (\x -> b >> return x)
 createPool :: LoggerEnv (ConnPool Host)
 createPool = bracket_
 		(infoM_ $ "Creating connection pool to address: " ++ C.host)
-		(infoM_ $ "Pool created")
+		(infoM_ "Pool created")
 		(io $ newConnPool maximumTCPConnections $ host C.host)
 
 closePool :: ConnPool Host -> LoggerEnv ()
@@ -54,13 +54,13 @@ getEnv pool = do
 
 runOnDatabase db f = do
 		p <- asks pipe
-		log . io $ runAction (use (Database $ db) f) (Safe []) Master p
+		log . io $ runAction (use (Database db) f) (Safe []) Master p
 
 -- | addMsg lookups the corresponding id and inserts the message.
 addMsg :: ServerName -> Channel -> UserName -> String -> DatabaseEnv ()
 addMsg server channel nick msg = do
 	log $ debugM_ "Adding message"
-	let query = ["nick" =: nick, "ircserver" =: (getNetwork server), "logs.end" =: infiniteTime]
+	let query = ["nick" =: nick, "ircserver" =: getNetwork server, "logs.end" =: infiniteTime]
 	record <- transferTo <$> (`IRCMessage` msg) <$> liftIO getCurrentTime
 
 	count' <- runOnDatabase "irc" $ 
@@ -92,7 +92,7 @@ searchNick :: ServerName -> String -> UserName -> DatabaseEnv Bool
 searchNick server host nick = do
 	log $ debugM_ $ "Searching for nick: " ++ nick
 	-- TODO: use Regex type as defined in BSON library
-	let filterQuery = ["nick" =: nick, "ircserver" =: (getNetwork server), "hostname" =: host]
+	let filterQuery = ["nick" =: nick, "ircserver" =: getNetwork server, "hostname" =: host]
 	res <- runOnDatabase "irc" $ 
                 find (select filterQuery "data") >>= rest
         user <- case res of
@@ -107,7 +107,7 @@ searchNick server host nick = do
 		lift (debugM_ "Found an active Activity record") >> return True
 		else do
 
-	lift $ debugM_ $ "Contents of translated: " ++ (show $ head translated)
+	lift $ debugM_ $ "Contents of translated: " ++ show (head translated)
 	lift $ debugM_ "Adding an empty Activity record"
 	activity <- transferTo . (`Activity` infiniteTime) <$> liftIO getCurrentTime
 	res <- runOnDatabase "irc" $ 

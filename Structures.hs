@@ -88,8 +88,10 @@ liftM8 f a1 a2 a3 a4 a5 a6 a7 a8 = return f
 	`ap` a1 `ap` a2 `ap` a3 `ap` a4 `ap` a5 `ap` a6 `ap` a7 `ap` a8
 
 toVal = map (\(l, W v) -> (l :: UString) := val v)
-f a d = lookup a d
 extrBin a d = f a d >>= \(Binary x) -> return x
+
+f :: (Val v, Monad m) => Label -> Document -> m v
+f = lookup
 
 -- MongoIO instances of every data-structure that will be stored in the database.
 instance MongoIO Entry where
@@ -104,7 +106,7 @@ instance MongoIO Entry where
 			]
 		where
 		parseId = case id entry of
-			Just _id -> [("_id", W $ _id)]
+			Just id' -> [("_id", W id')]
 			Nothing -> []
 
 	transferFrom doc = liftM8 Entry (Just $ f "_id" doc) (f "nick" doc) (f "ircserver" doc)
