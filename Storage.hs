@@ -1,4 +1,3 @@
---let s f = runAction (use (Database $ u "irc") f) (Safe []) Master p'
 {-# LANGUAGE OverloadedStrings #-}
 
 module Storage

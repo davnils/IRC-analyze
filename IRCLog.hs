@@ -1,6 +1,7 @@
 module Main
 where
 
+import Configuration
 import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM.TChan
@@ -29,7 +30,7 @@ import System.Log.Handler (setFormatter)
 import Text.Printf
 
 main :: IO ()
-main = runReaderT run $ LoggerState "default"
+main = runReaderT run $ LoggerState "main"
 
 run :: LoggerEnv ()
 run = do
@@ -85,8 +86,8 @@ worker server = do
 	liftIO $ hSetBuffering h NoBuffering
 	S.modify $ \(ChildState db _ c _) -> ChildState db (Valid (h, server)) c []
 	
-	write "NICK botty93"
-	write "USER botty93 0 * :tuto bot"
+	write $ "NICK " ++ ircNick
+	write $ "USER " ++ ircUser
 	forever workerLoop
 	liftIO $ hClose h
 
@@ -130,9 +131,7 @@ ircAction (Message _ "352" [_,_,user,host,server,nick,_,real]) = do
 	where
 		runQuery q = do
 			pipe <- S.gets dbSocket
-			lift $ runReaderT 
-				q --TODO: Don't ignore the result(???)
-				(DatabaseState pipe)
+			lift $ runReaderT q (DatabaseState pipe)
 
 ircAction (Message _ "352" _) = lift $ errorM_ $ "Read invalid 352 message"
 
