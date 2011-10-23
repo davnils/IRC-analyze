@@ -8,25 +8,19 @@ ChannelMessage(..), Entry(..), Activity(..), IRCMessage(..), HandleWrapper(..),
 transferTo, transferFrom)
 where
 
-import Control.Applicative
-import Control.Concurrent.MVar
 import Control.Concurrent.STM.TChan
 import Control.Exception
 import Control.Monad
-import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.State
-import qualified Data.ByteString.Char8 as L
 import Data.Bson (ObjectId)
-import Data.Int
 import qualified Data.Map as M
-import qualified Data.Set as S
-import Data.Time.Clock (UTCTime(..), utctDay, getCurrentTime, secondsToDiffTime)
+import Data.Time.Clock (UTCTime(..))
 import Data.Time.Calendar (toModifiedJulianDay, Day(..))
 import Data.Typeable
 import Database.MongoDB hiding (timestamp)
 import LogWrapper
-import Network.Socket(HostName)
+import Network.Socket (HostName)
 import Prelude hiding (log, catch, lookup, id)
 import qualified Prelude as P
 import System.IO
@@ -83,12 +77,15 @@ class MongoIO a where
 data ValWrapper = forall a. Val a => W a
 
 -- | Local functions used for convenience in MongoIO instances.
-liftM6 f a1 a2 a3 a4 a5 a6 = return f `ap` a1 `ap` a2 `ap` a3 `ap` a4 `ap` a5 `ap` a6
-liftM8 f a1 a2 a3 a4 a5 a6 a7 a8 = return f
+liftM8 :: Monad m =>
+	(a1 -> a2 -> a3 -> a4 -> a5 -> a6 -> a7 -> a8 -> b)
+	-> m a1 -> m a2 -> m a3 -> m a4 -> m a5 -> m a6 -> m a7 -> m a8
+	-> m b
+liftM8 f' a1 a2 a3 a4 a5 a6 a7 a8 = return f'
 	`ap` a1 `ap` a2 `ap` a3 `ap` a4 `ap` a5 `ap` a6 `ap` a7 `ap` a8
 
+toVal :: [(UString, ValWrapper)] -> [Field]
 toVal = map (\(l, W v) -> (l :: UString) := val v)
-extrBin a d = f a d >>= \(Binary x) -> return x
 
 f :: (Val v, Monad m) => Label -> Document -> m v
 f = lookup

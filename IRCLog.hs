@@ -157,11 +157,11 @@ ircAction (Message prefix "PRIVMSG" params) = do
 			Just (NickName nick u h) -> (nick, fromMaybe "" u, fromMaybe "" h)
 			Nothing -> ("", "", "")
 		
-ircAction (Message prefix "PING" params) = do
+ircAction (Message _ "PING" params) = do
 	lift $ infoM_ $ "Got PING! (" ++ show params ++ ")"
 	case params of
 		[arg] -> write $ "PONG :" ++ arg
-		[] -> lift $ errorM_ "Got invalid PING without argument"
+		_ -> lift $ errorM_ "Got invalid PING without argument"
 
 ircAction (Message _ cmd _) = lift $ warningM_ $ "Ignored command: " ++ cmd
 
@@ -182,8 +182,9 @@ messageHandler = do
 		StatsQuery -> do 
 			reply <- StatsReply <$> S.gets channels
 			liftIO $ atomically $ writeTChan msgChan reply
+		_ -> return ()
 
-write :: String -> ChildEnv()
+write :: String -> ChildEnv ()
 write msg = do
 	Valid (h, _) <- S.gets ircHandle
 	liftIO $ hPrintf h "%s\r\n" msg

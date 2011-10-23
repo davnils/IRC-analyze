@@ -9,22 +9,18 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.Reader
-import Control.Monad.Trans.Maybe
-import Control.Exception (catch, IOException, evaluate, SomeException, throw)
-import Data.Int
-import qualified Data.ByteString.Char8 as L
+import Control.Exception (throw)
 import Data.Maybe
-import qualified Data.Set as S
-import Data.Time.Clock (UTCTime(..), utctDay, getCurrentTime, secondsToDiffTime)
-import Data.Time.Calendar (toModifiedJulianDay, Day(..))
+import Data.Time.Clock (UTCTime(..), getCurrentTime)
+import Data.Time.Calendar (Day(..))
 import Database.MongoDB
 import LogWrapper
 import Network.IRC
 import Prelude hiding (log, catch, lookup, id)
 import qualified Prelude as P
 import Structures
-import System.Log.Logger
 
+maximumTCPConnections :: Int
 maximumTCPConnections = 1
 
 log :: LoggerEnv a -> DatabaseEnv a
@@ -45,13 +41,15 @@ closePool pool = do
 	io $ killPipes pool
 
 getEnv :: ConnPool Host -> LoggerEnv (Maybe DatabaseState)
-getEnv pool = do
-	pipe <- io $ runErrorT $ getPipe Master pool
-	case pipe of
-		Right p -> 
-			return $ Just $ DatabaseState p
-		Left a -> errorM_ "Failed to connect to database" >> return Nothing 
+getEnv pool' = do
+	p <- io $ runErrorT $ getPipe Master pool'
+	case p of
+		Right pipe' -> 
+			return $ Just $ DatabaseState pipe'
+		Left _ -> errorM_ "Failed to connect to database" >> return Nothing 
 
+runOnDatabase :: UString -> ReaderT Database (Action IO) a
+	-> DatabaseEnv (Either Failure a)
 runOnDatabase db f = do
 		p <- asks pipe
 		log . io $ runAction (use (Database db) f) (Safe []) Master p
@@ -66,7 +64,7 @@ addMsg server channel nick msg = do
 	count' <- runOnDatabase "irc" $ 
 		count (select query "data")
 	case count' of
-		Left e -> log (errorM_ "Failed load count of users") >> throw Critical
+		Left _ -> log (errorM_ "Failed load count of users") >> throw Critical
 		Right val -> unless (val == 1) $
 			log (errorM_ $ "addMsg didn't match one user, but: " ++ show val)
 			>> throw Critical
@@ -75,7 +73,7 @@ addMsg server channel nick msg = do
 		modify (select query "data") ["$push" =: ["messages" =: record]]
 
         case res of
-                Left e -> log (errorM_ "Failed to add message") >> throw Critical
+                Left _ -> log (errorM_ "Failed to add message") >> throw Critical
 		_ -> return ()
 
 getNetwork :: String -> String
@@ -96,7 +94,7 @@ searchNick server host nick = do
 	res <- runOnDatabase "irc" $ 
                 find (select filterQuery "data") >>= rest
         user <- case res of
-                Left e -> log (errorM_ "Failed to search for nick") >> throw Critical
+                Left _ -> log (errorM_ "Failed to search for nick") >> throw Critical
 		Right docs -> return docs
 
         let translated = fromMaybe [] (mapM transferFrom user) :: [Entry]
