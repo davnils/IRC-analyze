@@ -88,8 +88,7 @@ ircAction (Message prefix "PRIVMSG" params) = do
 	Valid (_, server) <- S.gets ircHandle
 	pipe <- S.gets dbSocket
 	lift $ runReaderT 
-		(addMsg server (head params) nick (params !! 1)
-			>> return ()) --TODO: Don't ignore the result
+		(addMsg server (head params) nick (params !! 1))
 		(DatabaseState pipe)
 			
 	where
