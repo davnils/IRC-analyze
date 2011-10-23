@@ -61,39 +61,23 @@ runOnDatabase db f = do
 addMsg :: ServerName -> Channel -> UserName -> String -> DatabaseEnv ()
 addMsg server channel nick msg = do
 	log $ debugM_ "Adding message"
-	let query = ["nick" =: nick, "ircserver" =: (getNetwork server)]
+	let query = ["nick" =: nick, "ircserver" =: (getNetwork server), "logs.end" =: infiniteTime]
 	record <- transferTo <$> (`IRCMessage` msg) <$> liftIO getCurrentTime
 
-	--TODO: Check if an open log record exists (like a filter in the select)
+	count' <- runOnDatabase "irc" $ 
+		count (select query "data")
+	case count' of
+		Left e -> log (errorM_ "Failed load count of users") >> throw Critical
+		Right val -> unless (val == 1) $
+			log (errorM_ $ "addMsg didn't match one user, but: " ++ show val)
+			>> throw Critical
+
 	res <- runOnDatabase "irc" $ 
 		modify (select query "data") ["$push" =: ["messages" =: record]]
-		--TODO: logs.find(end == 0) => en träff
 
         case res of
                 Left e -> log (errorM_ "Failed to add message") >> throw Critical
 		_ -> return ()
-	{-lift $ debugM_ $ "docs is of length: " ++ show (length loaded)
-	--find (select query "data") >>= rest
-
-        let translated = fromMaybe [] (mapM transferFrom loaded) :: [Entry]
-
-	success <- case length translated of
-		0 -> log $ errorM_ "Failed to find an id" >> throw Critical
-		1 -> log $ debugM_ "Found an id" >> return True
-		_ -> log $ errorM_ "Multiple id:s returned" >> throw Critical
-	
-	let user = head translated
-
-	--if (not . existsOpenSlot . logs . head) translated then return False else do
-	lift $ debugM_ $ "existsOpenSlot gives: " ++ show (existsOpenSlot $ logs $ head translated)
-	lift $ debugM_ $ "Dump of contents: " ++ (show $ head translated)
-
-	input <- (`IRCMessage` msg) <$> liftIO getCurrentTime
-	res <- runOnDatabase "irc" $ 
-		insert "data" $ transferTo input
-	case res of
-		Left e -> log (errorM_ $ "Failed to add message, error: " ++ show e) >> throw Critical
-		Right id -> log (debugM_ $ "Added message with id: " ++ show id) >> return True-}
 
 getNetwork :: String -> String
 getNetwork = tail . dropWhile (/= '.') 
