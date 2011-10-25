@@ -4,6 +4,10 @@ module LogWrapper where
 import Control.Monad.Reader
 import System.Log.Logger
 import Prelude hiding (log)
+import System.Log.Formatter
+import System.Log.Logger
+import System.Log.Handler.Simple
+import System.Log.Handler (setFormatter)
 
 -- | The state which is carried around functions able to log messages.
 data LoggerState = LoggerState { name :: String }
@@ -12,6 +16,13 @@ type LoggerEnv = ReaderT LoggerState IO
 
 io :: IO a -> LoggerEnv a
 io = liftIO
+
+logInitialize :: LoggerEnv ()
+logInitialize = do
+        logFile <- io $ fileHandler "log" DEBUG >>=  \h -> return $
+               setFormatter h (simpleLogFormatter "[$prio] $msg")
+        io $ updateGlobalLogger rootLoggerName $ addHandler logFile
+        io $ updateGlobalLogger rootLoggerName $ setLevel DEBUG
 
 logM__ :: String -> Priority -> String -> IO ()
 logM__ = logM

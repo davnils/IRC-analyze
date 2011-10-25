@@ -20,20 +20,13 @@ import qualified Prelude as P
 import Storage
 import Structures
 import System.IO
-import System.Log.Formatter
-import System.Log.Logger
-import System.Log.Handler.Simple
-import System.Log.Handler (setFormatter)
 
 main :: IO ()
 main = runReaderT run $ LoggerState "main"
 
 run :: LoggerEnv ()
 run = do
-        logFile <- io $ fileHandler "log" DEBUG >>=  \h -> return $
-                setFormatter h (simpleLogFormatter "[$prio] $msg")
-        io $ updateGlobalLogger rootLoggerName $ addHandler logFile
-        io $ updateGlobalLogger rootLoggerName $ setLevel DEBUG
+        logInitialize 
         infoM_ "Initializing"
         pool <- createPool
         _ <- S.runStateT shell $ ServerState pool M.empty
