@@ -3,9 +3,9 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 
 module Structures
-(DbException(..), DatabaseState(..), DatabaseEnv, ChildState(..), ChildEnv, ServerState(..), ServerEnv,
-ChannelMessage(..), Entry(..), Activity(..), IRCMessage(..), HandleWrapper(..),
-transferTo, transferFrom)
+(DbException(..), DatabaseState(..), DatabaseEnv, ChildState(..), ChildEnv,
+ServerState(..), ServerEnv, ChannelMessage(..), Entry(..), Activity(..),
+IRCMessage(..), HandleWrapper(..), transferTo, transferFrom)
 where
 
 import Control.Concurrent.STM.TChan
@@ -50,10 +50,12 @@ data Entry = Entry {    id :: Maybe ObjectId,
         deriving Show
 
 data Activity = Activity {      start :: UTCTime,
-                                end :: UTCTime }
+                                end :: UTCTime,
+                                channelActivity :: String }
         deriving Show
 
 data IRCMessage = IRCMessage {  timestamp :: UTCTime,
+                                msgChannel :: String,
                                 message :: String }
         deriving Show
 
@@ -64,7 +66,8 @@ type ServerEnv = StateT ServerState LoggerEnv
 data ChildState = ChildState {  dbSocket :: Pipe,
                                 ircHandle :: HandleWrapper,
                                 messageChannel :: TChan ChannelMessage,
-                                channels :: [String] }
+                                channels :: [String],
+                                whoBuffer :: [String] }
 type ChildEnv = StateT ChildState LoggerEnv
 
 data HandleWrapper = Invalid | Valid { getHandle :: (Handle, String) }
@@ -106,7 +109,8 @@ instance MongoIO Entry where
                         Just id' -> [("_id", W id')]
                         Nothing -> []
 
-        transferFrom doc = liftM8 Entry (Just $ f "_id" doc) (f "nick" doc) (f "ircserver" doc)
+        transferFrom doc = liftM8 Entry (Just $ f "_id" doc) (f "nick" doc)
+                (f "ircserver" doc)
                 (f "hostname" doc) (f "realname" doc) (f "username" doc)
                 (f "logs" doc >>= mapM transferFrom)
                 (f "messages" doc >>= mapM transferFrom)
@@ -114,12 +118,16 @@ instance MongoIO Entry where
 instance MongoIO Activity where
         transferTo activity = toVal [
                                 ("start", W $ start activity),
-                                ("end", W $ end activity)
+                                ("end", W $ end activity),
+                                ("channel", W $ channelActivity activity)
                                 ]
-        transferFrom doc = liftM2 Activity (f "start" doc) (f "end" doc)
+        transferFrom doc = liftM3 Activity
+                (f "start" doc) (f "end" doc) (f "channel" doc)
 
 instance MongoIO IRCMessage where
         transferTo msg = toVal [
                         ("timestamp", W $ timestamp msg),
+                        ("channel", W $ msgChannel msg),
                         ("msg", W $ message msg)]
-        transferFrom doc = liftM2 IRCMessage (f "timestamp" doc) (f "msg" doc)
+        transferFrom doc = liftM3 IRCMessage
+                (f "timestamp" doc) (f "channel" doc) (f "msg" doc)

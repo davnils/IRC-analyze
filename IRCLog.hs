@@ -26,7 +26,7 @@ main = runReaderT run $ LoggerState "main"
 
 run :: LoggerEnv ()
 run = do
-        logInitialize 
+        logInitialize
         infoM_ "Initializing"
         pool <- createPool
         _ <- S.runStateT shell $ ServerState pool M.empty
@@ -40,6 +40,7 @@ shell = do
         unless (cmd == "quit") shell
 
 act :: String -> [String] -> ServerEnv ()
+-- TODO: Close all activity records on quit
 act "quit" _ = return ()
 act "add" [server, channel] = do
         -- Create a thread if one doesn't exist for this server.
@@ -62,7 +63,7 @@ launchThread :: String -> ServerEnv (TChan ChannelMessage, String)
 launchThread server = do
         pool <- S.gets pool
         chan <- liftIO newTChanIO :: ServerEnv (TChan ChannelMessage)
-        let build x = ChildState (pipe x) Invalid chan []
+        let build x = ChildState (pipe x) Invalid chan [] []
         Just env <- lift $ getEnv pool >>= \x -> return $ fmap build x
         r <- ask
         -- TODO: Clean up using forkable-monad
@@ -73,7 +74,8 @@ worker :: String -> ChildEnv ()
 worker server = do
         h <- liftIO $ connectTo server $ PortNumber 6667
         liftIO $ hSetBuffering h NoBuffering
-        S.modify $ \(ChildState db _ c _) -> ChildState db (Valid (h, server)) c []
+        S.modify $ \(ChildState db _ c _ _)
+                -> ChildState db (Valid (h, server)) c [] []
         ircInitialize
         _ <- forever workerLoop
         liftIO $ hClose h

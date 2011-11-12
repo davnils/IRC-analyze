@@ -2,7 +2,7 @@
 
 module Storage
 (createPool, closePool, getEnv, log, runOnDatabase,
-addMsg, searchNick, insertNick)
+addMsg, searchNick, insertNick, removeActivity)
 where
 import qualified Configuration as C
 import Control.Applicative
@@ -58,15 +58,19 @@ runOnDatabase db f = do
 addMsg :: ServerName -> Channel -> UserName -> String -> DatabaseEnv ()
 addMsg server channel nick msg = do
         log $ debugM_ "Adding message"
-        let query = ["nick" =: nick, "ircserver" =: getNetwork server, "logs.end" =: infiniteTime]
-        record <- transferTo <$> (`IRCMessage` msg) <$> liftIO getCurrentTime
+        let query = ["nick" =: nick, "ircserver" =: getNetwork server,
+                "logs" =: ["$elemMatch" =:
+                ["end" =: infiniteTime, "channel" =: channel]]]
+        record <- transferTo <$> (\t -> IRCMessage t channel msg)
+                <$> liftIO getCurrentTime
 
         count' <- runOnDatabase "irc" $
                 count (select query "data")
         case count' of
-                Left _ -> log (errorM_ "Failed load count of users") >> throw Critical
-                Right val -> unless (val == 1) $
-                        log (errorM_ $ "addMsg didn't match one user, but: " ++ show val)
+                Left _ -> log (errorM_ "Failed load count of users")
+                        >> throw Critical
+                Right val -> unless (val == 1) $ log (errorM_ $
+                        "addMsg didn't match one user, but: " ++ show val)
                         >> throw Critical
 
         res <- runOnDatabase "irc" $
@@ -76,23 +80,28 @@ addMsg server channel nick msg = do
                 Left _ -> log (errorM_ "Failed to add message") >> throw Critical
                 _ -> return ()
 
+-- TODO: use Regex type as defined in BSON library
 getNetwork :: String -> String
 getNetwork = tail . dropWhile (/= '.')
 
-existsOpenSlot :: [Activity] -> Bool
-existsOpenSlot = any (\log -> end log == infiniteTime)
+existsOpenSlot :: String -> [Activity] -> Bool
+existsOpenSlot channel = any (\log -> end log == infiniteTime
+        && channelActivity log == channel)
 
 infiniteTime :: UTCTime
 infiniteTime = UTCTime (ModifiedJulianDay 0) 0
 
+activityQuery :: String -> String -> String -> Document
+activityQuery nick server host = ["nick" =: nick, "ircserver" =: getNetwork server
+        , "hostname" =: host]
+
 -- | Search for the given server/nick and return true if an active session exists.
-searchNick :: ServerName -> String -> UserName -> DatabaseEnv Bool
-searchNick server host nick = do
+searchNick :: ServerName -> String -> UserName -> String -> DatabaseEnv Bool
+searchNick server host nick channel = do
         log $ debugM_ $ "Searching for nick: " ++ nick
-        -- TODO: use Regex type as defined in BSON library
-        let filterQuery = ["nick" =: nick, "ircserver" =: getNetwork server, "hostname" =: host]
         res <- runOnDatabase "irc" $
-                find (select filterQuery "data") >>= rest
+                find (select (activityQuery nick server host) "data")
+                >>= rest
         user <- case res of
                 Left _ -> log (errorM_ "Failed to search for nick") >> throw Critical
                 Right docs -> return docs
@@ -100,30 +109,46 @@ searchNick server host nick = do
         let translated = fromMaybe [] (mapM transferFrom user) :: [Entry]
         if null translated then return False else do
 
-        -- Check if there exists an active Activity record. If not, add one.
-        if (existsOpenSlot . logs . head) translated then
+        -- Check if there exists an active Activity record for this channel.
+        -- If not, add one.
+        if (existsOpenSlot channel . logs . head) translated then
                 lift (debugM_ "Found an active Activity record") >> return True
                 else do
 
         lift $ debugM_ $ "Contents of translated: " ++ show (head translated)
         lift $ debugM_ "Adding an empty Activity record"
-        activity <- transferTo . (`Activity` infiniteTime) <$> liftIO getCurrentTime
+        activity <- transferTo . (\t -> Activity t infiniteTime channel)
+                <$> liftIO getCurrentTime
         res <- runOnDatabase "irc" $
-                modify (select filterQuery "data") ["$push" =: ["logs" =: activity]]
+                modify (select (activityQuery nick server host) "data")
+                        ["$push" =: ["logs" =: activity]]
         case res of
                 Left e -> log (errorM_ $ "Failed to add activity, error: " ++ show e) >> throw Critical
                 Right _ -> log (debugM_ "Inserted activity") >> return True
 
 -- | Insert a new user into the database.
-insertNick :: ServerName -> String -> UserName -> String -> String-> DatabaseEnv ()
-insertNick server host nick user real = do
+insertNick :: ServerName -> String -> UserName -> String -> String
+        -> String-> DatabaseEnv ()
+insertNick server host nick user real channel = do
         lift $ debugM_ $ "Inserting new nick: " ++ nick
         current <- liftIO getCurrentTime
         let entry = Entry Nothing nick (getNetwork server) host real user
-                [Activity current infiniteTime] []
+                [Activity current infiniteTime channel] []
         res <- runOnDatabase "irc" $
                 insert "data" $ transferTo entry
         case res of
                 Left e -> log (errorM_ $ "Failed to add user, error: " ++ show e) >> throw Critical
                 Right id -> log (debugM_ $ "Added user with id: " ++ show id)
 
+-- | Close an activity record given by server, nick and channel.
+removeActivity :: String -> Channel -> UserName -> UTCTime -> DatabaseEnv ()
+removeActivity server channel nick endTime = do
+        res <- runOnDatabase "irc" $
+                modify (select
+                        ["nick" =: nick, "ircserver" =: getNetwork server,
+                        "logs" =: ["$elemMatch" =:
+                        ["end" =: infiniteTime, "channel" =: channel]]] "data")
+                        ["$set" =: ["logs.$.end" =: endTime]]
+        case res of
+                Left _ -> log (errorM_ "Failed to close activity record") >> throw Critical
+                _ -> return ()
