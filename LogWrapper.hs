@@ -2,7 +2,6 @@
 module LogWrapper where
 
 import Control.Monad.Reader
-import System.Log.Logger
 import Prelude hiding (log)
 import System.Log.Formatter
 import System.Log.Logger
