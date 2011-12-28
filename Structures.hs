@@ -59,8 +59,7 @@ data IRCMessage = IRCMessage {  timestamp :: UTCTime,
                                 message :: String }
         deriving Show
 
-data ServerState = ServerState {        pool :: ConnPool Host,
-                                        childs :: M.Map String (TChan ChannelMessage) }
+data ServerState = ServerState {        childs :: M.Map String (TChan ChannelMessage) }
 type ServerEnv = StateT ServerState LoggerEnv
 
 data ChildState = ChildState {  dbSocket :: Pipe,

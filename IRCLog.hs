@@ -28,10 +28,8 @@ run :: LoggerEnv ()
 run = do
         logInitialize
         infoM_ "Initializing"
-        pool <- createPool
-        _ <- S.runStateT shell $ ServerState pool M.empty
+        _ <- S.runStateT shell $ ServerState M.empty
         infoM_ "Shutting down"
-        closePool pool
 
 shell :: ServerEnv()
 shell = do
@@ -51,8 +49,8 @@ act "add" [server, channel] = do
                         Just x <- M.lookup server <$> S.gets childs
                         return x
                 else fst <$> launchThread server
-        S.modify $ \(ServerState p c) ->
-                ServerState p $ M.insert server pipe c
+        S.modify $ \(ServerState c) ->
+                ServerState $ M.insert server pipe c
         liftIO $ atomically $ writeTChan pipe $ JoinMessage channel
 
 act _ _ = return ()
@@ -61,10 +59,9 @@ act _ _ = return ()
 
 launchThread :: String -> ServerEnv (TChan ChannelMessage, String)
 launchThread server = do
-        pool <- S.gets pool
         chan <- liftIO newTChanIO :: ServerEnv (TChan ChannelMessage)
         let build x = ChildState (pipe x) Invalid chan [] []
-        Just env <- lift $ getEnv pool >>= \x -> return $ fmap build x
+        Just env <- lift $ getEnv >>= \x -> return $ fmap build x
         r <- ask
         -- TODO: Clean up using forkable-monad
         _ <- liftIO $ forkIO $ runReaderT (S.runStateT (worker server) env) r >> return ()

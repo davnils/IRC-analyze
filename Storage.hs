@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Storage
-(createPool, closePool, getEnv, log, runOnDatabase,
+(getEnv, log, runOnDatabase,
 addMsg, searchNick, insertNick, removeActivity)
 where
 import qualified Configuration as C
@@ -29,30 +29,19 @@ log = lift
 bracket_ :: Monad m => m a -> m b -> m c -> m c
 bracket_ a b c = a >> c >>= (\x -> b >> return x)
 
-createPool :: LoggerEnv (ConnPool Host)
-createPool = bracket_
-                (infoM_ $ "Creating connection pool to address: " ++ C.host)
-                (infoM_ "Pool created")
-                (io $ newConnPool maximumTCPConnections $ host C.host)
-
-closePool :: ConnPool Host -> LoggerEnv ()
-closePool pool = do
-        infoM_ "Closing connection pool"
-        io $ killPipes pool
-
-getEnv :: ConnPool Host -> LoggerEnv (Maybe DatabaseState)
-getEnv pool' = do
-        p <- io $ runErrorT $ getPipe Master pool'
+getEnv :: LoggerEnv (Maybe DatabaseState)
+getEnv = do
+        --p <- io $ runErrorT $ getPipe Master pool'
+        p <- io $ runErrorT $ connect $ host C.host
         case p of
                 Right pipe' ->
                         return $ Just $ DatabaseState pipe'
                 Left _ -> errorM_ "Failed to connect to database" >> return Nothing
 
-runOnDatabase :: UString -> ReaderT Database (Action IO) a
-        -> DatabaseEnv (Either Failure a)
+runOnDatabase :: UString -> Action IO a -> DatabaseEnv (Either Failure a)
 runOnDatabase db f = do
                 p <- asks pipe
-                log . io $ runAction (use (Database db) f) (Safe []) Master p
+                log . io $ access p master db f
 
 -- | addMsg lookups the corresponding id and inserts the message.
 addMsg :: ServerName -> Channel -> UserName -> String -> DatabaseEnv ()
@@ -61,8 +50,6 @@ addMsg server channel nick msg = do
         let query = ["nick" =: nick, "ircserver" =: getNetwork server,
                 "logs" =: ["$elemMatch" =:
                 ["end" =: infiniteTime, "channel" =: channel]]]
-        record <- transferTo <$> (\t -> IRCMessage t channel msg)
-                <$> liftIO getCurrentTime
 
         count' <- runOnDatabase "irc" $
                 count (select query "data")
@@ -72,6 +59,9 @@ addMsg server channel nick msg = do
                 Right val -> unless (val == 1) $ log (errorM_ $
                         "addMsg didn't match one user, but: " ++ show val)
                         >> throw Critical
+
+        record <- transferTo <$> (\t -> IRCMessage t channel msg)
+                <$> liftIO getCurrentTime
 
         res <- runOnDatabase "irc" $
                 modify (select query "data") ["$push" =: ["messages" =: record]]
